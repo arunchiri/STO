@@ -1,7 +1,8 @@
 import torch
 import pandas as pd
+import numpy as np
 from model import TCNForecastModel
-from data_processing import SalesDataset, add_holidays, add_oil
+from data_processing import add_oil, add_holidays
 
 @torch.no_grad()
 def main():
@@ -10,43 +11,55 @@ def main():
     model.load_state_dict(torch.load("checkpoints/best.pt", map_location="cpu"))
     model.eval()
 
-    df = pd.read_csv("dataset/test.csv", parse_dates=["date"])
+    train = pd.read_csv("dataset/train.csv", parse_dates=["date"])
+    test = pd.read_csv("dataset/test.csv", parse_dates=["date"])
     stores = pd.read_csv("dataset/stores.csv")
     oil = pd.read_csv("dataset/oil.csv", parse_dates=["date"])
     holidays = pd.read_csv("dataset/holidays_events.csv", parse_dates=["date"])
 
-    df["family"] = df["family"].astype("category").cat.codes
-    df = df.merge(stores[["store_nbr", "cluster"]], on="store_nbr")
-    
-    # Add oil and holidays to test data
-    df = add_holidays(df, holidays)
-    df = add_oil(df, oil)
+    train["family"] = train["family"].astype("category").cat.codes
+    test["family"] = test["family"].astype("category").cat.codes
+
+    train = train.merge(stores[["store_nbr", "cluster"]], on="store_nbr")
+    test = test.merge(stores[["store_nbr", "cluster"]], on="store_nbr")
+
+    train = add_oil(train, oil)
+    train = add_holidays(train, holidays)
+    test = add_oil(test, oil)
+    test = add_holidays(test, holidays)
+
+    history = {}
+    for (s, f), g in train.groupby(["store_nbr", "family"]):
+        g = g.sort_values("date")
+        history[(s, f)] = list(g["sales"].iloc[-28:])
 
     preds = []
-    history = {}
 
-    for _, row in df.iterrows():
-        key = (row.store_nbr, row.family)
-        lags = history.get(key, [0.0, 0.0, 0.0])
+    for _, r in test.iterrows():
+        key = (r.store_nbr, r.family)
+        h = history[key]
 
-        # Create sequence with proper shape and data types
-        seq = torch.tensor(
-            [[lags[0], lags[1], lags[2], row.onpromotion, row.oil, row.is_holiday]], 
-            dtype=torch.float32
-        )
-        
+        seq = torch.tensor([[
+            h[-7], h[-14], h[-28],
+            r.onpromotion,
+            r.oil,
+            r.is_holiday
+        ]], dtype=torch.float32).view(1, 1, -1)
+
         batch = {
-            "seq": seq.unsqueeze(0),  # Shape: [1, 1, 6]
-            "store": torch.tensor([row.store_nbr], dtype=torch.long),
-            "cluster": torch.tensor([row.cluster], dtype=torch.long),
-            "family": torch.tensor([row.family], dtype=torch.long),
+            "seq": seq,
+            "store": torch.tensor([r.store_nbr]),
+            "cluster": torch.tensor([r.cluster]),
+            "family": torch.tensor([r.family]),
         }
 
-        y = model(batch).item()
-        preds.append(max(0, y))
-        history[key] = [y, lags[0], lags[1]]
+        y_log = model(batch).item()
+        y = np.expm1(y_log)
 
-    pd.DataFrame({"id": df["id"], "sales": preds}).to_csv("submission.csv", index=False)
+        preds.append(max(0, y))
+        h.append(y)
+
+    pd.DataFrame({"id": test["id"], "sales": preds}).to_csv("submission.csv", index=False)
     print("submission.csv created")
 
 if __name__ == "__main__":

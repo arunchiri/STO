@@ -2,14 +2,15 @@ import torch
 from torch import nn
 
 class TemporalBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, kernel=3):
+    def __init__(self, in_ch, out_ch):
         super().__init__()
-        self.conv = nn.Conv1d(in_ch, out_ch, kernel, padding=kernel-1)
+        self.conv = nn.Conv1d(in_ch, out_ch, kernel_size=1)
         self.norm = nn.BatchNorm1d(out_ch)
         self.act = nn.ReLU()
 
     def forward(self, x):
         return self.act(self.norm(self.conv(x)))
+
 
 class TCNForecastModel(nn.Module):
     def __init__(self, meta):
@@ -22,7 +23,6 @@ class TCNForecastModel(nn.Module):
         self.tcn = nn.Sequential(
             TemporalBlock(meta["seq_features"], 64),
             TemporalBlock(64, 64),
-            nn.AdaptiveAvgPool1d(1)
         )
 
         self.head = nn.Sequential(
@@ -32,9 +32,8 @@ class TCNForecastModel(nn.Module):
         )
 
     def forward(self, batch):
-        # temporal: [B, T, F] → [B, F, T]
         x = batch["seq"].transpose(1, 2)
-        tcn_out = self.tcn(x).squeeze(-1)
+        t = self.tcn(x).mean(dim=-1)
 
         emb = torch.cat([
             self.store_emb(batch["store"]),
@@ -42,4 +41,4 @@ class TCNForecastModel(nn.Module):
             self.family_emb(batch["family"]),
         ], dim=1)
 
-        return self.head(torch.cat([tcn_out, emb], dim=1)).squeeze(1)
+        return self.head(torch.cat([t, emb], dim=1)).squeeze(1)
