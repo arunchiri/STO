@@ -16,7 +16,7 @@ def add_holidays(df, holidays):
 def add_oil(df, oil):
     oil = oil.rename(columns={"dcoilwtico": "oil"})
     oil["oil"] = oil["oil"].ffill()
-    return df.merge(oil, on="date", how="left").fillna(method="ffill")
+    return df.merge(oil, on="date", how="left").ffill()
 
 class SalesDataset(Dataset):
     def __init__(self, df, seq_cols, train=True):
