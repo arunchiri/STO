@@ -1,2 +1,1 @@
-dataset/train.csv filter=lfs diff=lfs merge=lfs -text
-*.csv filter=lfs diff=lfs merge=lfs -text
+# .gitattributes — removed CSV LFS rules
